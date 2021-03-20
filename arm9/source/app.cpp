@@ -1,14 +1,21 @@
 #include "app.h"
+#include "ID.h"
 
 u16 flashid = 0;
 u16 cartSize = 0;
 u16 busType = 0;
-u16 romType = 0;
+u8  adressSeqType = 0;
+u16 intelType = 0;
+u16 manufactorID = 0;
+u16 seq_1[] = { 0x555, 0x2AA, 0x555, 0x555, 0x2AA, 0x555};
+u16 seq_2[] = { 0xAAA, 0x555, 0xAAA, 0xAAA, 0x555, 0xAAA}; 
+
 unsigned long fileSize = 0;
 FILE* fd;
 u8* sdBuffer = (u8*)malloc(sizeof(u8) * 512);
 
-u16 swapBits(u16 n) {
+u16 swapBits(u16 n) 
+{
 	u16 p1 = 0;
 	u16 p2 = 1;
 	u16 bit1 = (n >> p1) & 1;
@@ -19,22 +26,27 @@ u16 swapBits(u16 n) {
 	return result;
 }
 
-u16 read_word_rom(unsigned long address) {
+u16 read_word_rom(unsigned long address) 
+{
 	return GBAROM[address];
 }
-u16 read_swapped_word_rom(unsigned long address) {
+u16 read_swapped_word_rom(unsigned long address) 
+{
 	return swapBits(read_word_rom(address));
 }
 
-void write_word_rom(unsigned long address, u16 byte) {
+void write_word_rom(unsigned long address, u16 byte) 
+{
 	GBA_BUS[address] = byte;
 	swiDelay(10);
 }
-void write_swapped_word_rom(unsigned long address, u16 byte) {
+void write_swapped_word_rom(unsigned long address, u16 byte) 
+{
 	write_word_rom(address, swapBits(byte));
 }
 
-void ( *( write_word() ) )(unsigned long address, u16 byte) { 
+void ( *( write_word() ) )(unsigned long address, u16 byte) 
+{ 
 	switch(busType) {
 		case 0: return write_word_rom; 
 		case 1: return write_swapped_word_rom; 
@@ -42,7 +54,8 @@ void ( *( write_word() ) )(unsigned long address, u16 byte) {
 	
 } 
 
-u16 ( *( read_word() ) )(unsigned long address) { 
+u16 ( *( read_word() ) )(unsigned long address) 
+{ 
 	switch(busType) {
 		case 0: return read_word_rom; 
 		case 1: return read_swapped_word_rom; 
@@ -50,67 +63,151 @@ u16 ( *( read_word() ) )(unsigned long address) {
 	
 } 
 
-void resetMX29GL128E_GBA() {
+u16* getAddressSeq22XX() 
+{
+	u16* data_sec;
+	switch(adressSeqType) {
+		case 0: data_sec = seq_1; 
+		case 1: data_sec = seq_2; 
+	}
+	
+	return data_sec;
+}
+
+void reset22XX() 
+{
 	write_word()(0, 0xF0);
 }
 
-void idFlashrom_GBA() {
-	write_word_rom(0, 0x90);
-	flashid = read_word_rom(0x2) & 0xFF00 || read_word_rom(0x4) & 0xFF;
-	if (flashid == 0x8802 || flashid == 8816) {
-		iprintf("flashId: %04X \n");
-		cartSize = 0x2000000;
-		return;
+void detect22XX() 
+{
+	u8 data_sec[] = { 0xAA, 0x55, 0x90};
+	for(adressSeqType = 0; adressSeqType <= 1; ++adressSeqType) {
+		u16* addr_sec = getAddressSeq22XX();
+		for(busType = 0; busType <= 1; ++busType) {
+			for(u16 i = 0; i < 3; ++i) {
+				write_word()(*(addr_sec + i), data_sec[i]);
+			}
+			flashid = read_word()(0x1);
+			manufactorID = read_word()(0x0);
+			if (((flashid >> 8) & 0xFF) == 0x22) {
+				reset22XX();
+				return;
+			}
+		}
 	}
 	
-	cartSize = 0x1000000;	
-	write_word_rom(0x555, 0xAA);
-    	write_word_rom(0x2AA, 0x55);
-    	write_word_rom(0x555, 0x90);
-	flashid = read_word_rom(0x01);
-	romType = read_word_rom(0x0);
-	if (flashid == 0x227E) {
-		resetMX29GL128E_GBA();
-		return;
-	}
-	
-	write_swapped_word_rom(0xAAA, 0xAA);
-    	write_swapped_word_rom(0x555, 0x55);
-    	write_swapped_word_rom(0xAAA, 0x90);
-    	flashid = read_swapped_word_rom(0x01);
-    	romType = read_swapped_word_rom(0x0);
-	if (flashid == 0x227E) {
-		busType = 1;
-		resetMX29GL128E_GBA();
-		return;
-	}
 	flashid = 0;
+	busType = 0;
 }
 
-void resetIntel_GBA(unsigned long partitionSize) {
+void programmCycle22XX() 
+{
+	u8 data_sec[] = { 0xAA, 0x55, 0xA0};
+	u16* addr_sec = getAddressSeq22XX();
+	
+	for(u16 i = 0; i < 3; ++i) {
+		write_word()(*(addr_sec + i), data_sec[i]);
+	}
+}
+
+void erase22XX() 
+{
+	u8 data_sec[] = { 0xAA, 0x55, 0x80, 0xAA, 0x55, 0x10};
+	u16* addr_sec = getAddressSeq22XX();
+
+	for(u16 i = 0; i < 6; ++i) {
+		write_word()(*(addr_sec + i), data_sec[i]);
+	}
+
+	u16 statusReg = 0;
+	while ((statusReg | 0xFF7F) != 0xFFFF) {
+		statusReg = read_word()(0x0);
+		swiDelay(10);
+	}	
+}
+
+void resetIntel_GBA(unsigned long partitionSize) 
+{
 	for (unsigned long currPartition = 0; currPartition < cartSize; currPartition += partitionSize) {
 		write_word()(currPartition, 0xFFFF);
 	}
 }
 
-void eraseMX29GL128E_GBA() {
+void detectIntel() {
 
-	write_word()(0x555, 0xAA);
-	write_word()(0x2AA, 0x55);
-	write_word()(0x555, 0x80);
-	write_word()(0x555, 0xAA);
-	write_word()(0x2AA, 0x55);
-	write_word()(0x555, 0x10);
-
-	// Read the status register
-	u16 statusReg = 0;
-	while ((statusReg | 0xFF7F) != 0xFFFF) {
-		statusReg = read_word()(0);
-		swiDelay(10);
+	u16 manufactorID = read_word_rom(0x0);
+	u16 bufSigns[] = {0x8902, 0x8904, 0x887D, 0x887E, 0x88B0};
+	
+	write_word_rom(0, 0xFF);
+	write_word_rom(0, 0x50);
+	write_word_rom(0, 0x90);
+	u16 flashid = read_word_rom(0x2) & 0xFF00 || read_word_rom(0x4) & 0xFF;
+	if (flashid == 0x8802 || flashid == 8816) {
+		write_word_rom(0, 0xFF);
+		intelType = 3;
+		return;
 	}
+	
+	flashid = read_word_rom(0x1);
+	
+	for(unsigned int i = 0;i < 4;i++){
+		if(flashid == bufSigns[i]) {
+			intelType = 2;
+			return;
+		}
+	}
+	
+	if(((flashid >> 8) & 0xFF) == 0x88) {
+		intelType = 1;
+		return;
+	}
+	
+	if(flashid == 0xB0 && read_word_rom(0) == 0xB0){
+		intelType = 1;
+		return;
+	}
+		
+	intelType = 0;
+	flashid = 0;
 }
 
-void eraseIntel4000_GBA() {
+
+void idFlashrom_GBA() 
+{
+	detectIntel();
+	if (flashid != 0) {
+		return;
+	}
+	
+	detect22XX();
+	if(flashid != 0) {
+		return;
+	}
+	
+	write_word_rom(0x154, 0xF0F0);
+	write_word_rom(0x154, 0x9898);
+	flashid = read_word_rom(0x40);
+	if(flashid == 0x5152 && read_word_rom(0x44) == 0x5251){
+		write_word_rom(0x154, 0xF0F0);
+		return;
+	}
+	
+	write_word_rom(0x0, 0xF0F0);
+	write_word_rom(0xAA, 0x9898);
+	flashid = read_word_rom(0x20);
+	if(flashid == 0x5152){
+		write_word_rom(0x0, 0xF0F0);
+		return;
+	}
+	
+
+
+	flashid = 0;
+}
+
+void eraseIntel4000_GBA() 
+{
 	// If the game is smaller than 16Mbit only erase the needed blocks
 	unsigned long lastBlock = 0xFFFFFF;
 	if (fileSize < 0xFFFFFF)
@@ -282,7 +379,7 @@ void writeIntel4000_GBA() {
 	}
 }
 
-void writeMX29GL128E_GBA() {
+void write22XX() {
 	u16 currWord;
 	unsigned long address;
 	for (unsigned long currSector = 0; currSector < fileSize; currSector += 0x20000) {
@@ -294,9 +391,7 @@ void writeMX29GL128E_GBA() {
 			// Write 32 words at a time
 			for (int currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 2) {
 				// Write Buffer command
-				write_word()(0x555, 0xAA);
-				write_word()(0x2AA, 0x55);
-				write_word()(0x555, 0xA0);
+				programmCycle22XX();
 
 				currWord = ( ( sdBuffer[currWriteBuffer + 1] & 0xFF ) << 8 ) | ( sdBuffer[currWriteBuffer] & 0xFF );
 				address = (currSector + currSdBuffer + currWriteBuffer) / 2;
@@ -322,35 +417,10 @@ bool flashRepro_GBA() {
 	// Check flashrom ID's
 	idFlashrom_GBA();
 
-	if (flashid == 0x8802 || flashid == 0x8816 || flashid == 0x227E) {
+	if (((flashid >> 8) & 0xFF) == 0x22 || ((flashid >> 8) & 0xFF) == 0x88) {
 		iprintf("ID: %04X Size: %DMB\n", flashid, cartSize / 0x100000);
-		// MX29GL128E or MSP55LV128(N)
-		if (flashid == 0x227E) {
-			// MX is 0xC2 and MSP55LV128 is 0x4 and MSP55LV128N 0x1
-			if (romType == 0xC2) {
-				iprintf("Macronix MX29GL128E\n");
-			}
-			else if (romType == 0x1 || romType == 0x4) {
-				iprintf("Fujitsu MSP55LV128N\n");
-			}
-			else if (romType == 0x89) {
-				iprintf("Intel PC28F256M29\n");
-			}
-			else if (romType == 0x20) {
-				iprintf("ST M29W128GH\n");
-			}
-			else {
-				iprintf("Unknown manufacturer\n");
-			}
-		}
-		// Intel 4000L0YBQ0
-		else if (flashid == 0x8802) {
-			iprintf("Intel 4000L0YBQ0\n");
-		}
-		// Intel 4400L0ZDQ0
-		else if (flashid == 0x8816) {
-			iprintf("Intel 4400L0ZDQ0\n");
-		}
+
+		iprintf("%s \n", getManufacturByID(manufactorID));
 	
 		int prev = ftell(fd);
 		fseek(fd, 0L, SEEK_END);
@@ -371,17 +441,17 @@ bool flashRepro_GBA() {
 				eraseIntel4400_GBA();
 				resetIntel_GBA(0x200000);
 			}
-			else if (flashid == 0x227E) {
-				eraseMX29GL128E_GBA();
-				resetMX29GL128E_GBA();
+			else if (((flashid >> 8) & 0XFF) == 0x22) {
+				erase22XX();
+				reset22XX();
 			}
 			//Write flashrom
 			iprintf("Writing ");
-			if (flashid == 0x8802 || flashid == 0x8816) {
+			if (intelType > 0) {
 				writeIntel4000_GBA();
 			}
-			else if (flashid == 0x227E) {
-				writeMX29GL128E_GBA();
+			else if (((flashid >> 8) & 0xFF) == 0x22) {
+				write22XX();
 			}
 			
 			return true;
