@@ -1,47 +1,80 @@
 #include <nds.h>
-#include <string.h>
 
-static void menuValue32Handler(u32 value,void* data)
+#include <nds/bios.h>
+#include <nds/arm7/touch.h>
+
+void BootGbaARM7(u32 useBottomScreen)
 {
-  switch(value)
-  {
-    case 1:
-      {
-        u32 ii=0;
-        if(PersonalData->gbaScreen)
-          ii=(1*PM_BACKLIGHT_BOTTOM)|PM_SOUND_AMP;
-        else
-          ii=(1*PM_BACKLIGHT_TOP)|PM_SOUND_AMP;
-        writePowerManagement(PM_CONTROL_REG,ii);
-        swiChangeSoundBias(0,0x400);
-        swiSwitchToGBAMode();
-      }
-      break;
-    default:
-      break;
-  }
+    u8 powcnt;
+	
+	if(useBottomScreen) {
+		powcnt = 5;
+	}
+	else {
+		powcnt = 9;
+	}	
+	
+	REG_SPICNT = SPI_ENABLE | SPI_DEVICE_POWER | SPI_BAUD_1MHz | SPI_CONTINUOUS;
+	REG_SPIDATA = 0;
+	SerialWaitBusy();
+	
+	REG_SPICNT = SPI_ENABLE | SPI_DEVICE_POWER | SPI_BAUD_1MHz;
+	REG_SPIDATA = powcnt;
+	SerialWaitBusy();
+	
+	
+	REG_IME = 0;
+	REG_IE = 0;
+	while(REG_VCOUNT != 200);  // Wait for VBlank
+	// enter GBA mode
+	asm volatile (
+		"mov r2,#0x40\n"
+		"swi 0x1f0000\n"
+	:
+	:
+	: "r2"
+	);
+	
+}
+
+void VcountHandler() 
+{
+	inputGetAndSend();
+}
+
+volatile bool exitflag = false;
+
+void powerButtonCB() 
+{
+	exitflag = true;
 }
 
 int main()
 {
-  // read User Settings from firmware
-  readUserSettings();
+	readUserSettings();
 
-  irqInit();
-  fifoInit();
+	irqInit();
+	fifoInit();
+	SetYtrigger(80);
+	installSystemFIFO();
 
-  // Start the RTC tracking IRQ
-  initClockIRQ();
+	irqSet(IRQ_VCOUNT, VcountHandler);
 
-  fifoSetValue32Handler(FIFO_USER_08,menuValue32Handler,0);
+	irqEnable( IRQ_VBLANK | IRQ_VCOUNT);   
+	setPowerButtonCB(powerButtonCB);   
 
-  installSystemFIFO();
-
-  irqSet(IRQ_VBLANK,inputGetAndSend);
-
-  irqEnable(IRQ_VBLANK);
-
-  for(;;)swiWaitForVBlank();
-  
-  return 0;
+	while(!exitflag)
+	{
+		//swiWaitForVBlank();
+		
+		if(fifoCheckValue32(FIFO_USER_01)){
+			u32 screen = fifoGetValue32(FIFO_USER_01);
+			irqDisable(IRQ_ALL);
+			BootGbaARM7(screen);
+		}
+		
+		swiIntrWait(1,IRQ_FIFO_NOT_EMPTY);
+	}
 }
+
+
