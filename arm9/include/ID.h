@@ -9,6 +9,7 @@
 #define SST_ID			0xBF
 #define ST_ID			0x20
 #define WINBOND_ID		0xDA
+#define MITSUBISHI_ID		0x1C
 
 char* manufactur = (char*)malloc(sizeof(char) * 12);
 
@@ -43,6 +44,9 @@ static char* getManufacturByID(u8 ID)
 			break;
 		case WINBOND_ID:
 			manufactur = "Winbond";
+			break;
+		case MITSUBISHI_ID:
+			manufactur = "Mitsubishi";
 			break;
 		default:
 			manufactur = "Unknown";

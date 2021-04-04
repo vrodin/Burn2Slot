@@ -6,7 +6,7 @@ u8* sdBuffer = (u8*)malloc(sizeof(u8) * 512);
 CartInfo* cart = (CartInfo*)malloc(sizeof(CartInfo) + 1);
 u32 seq_1[] = { 0x555, 0x2AA, 0x555, 0x555, 0x2AA, 0x555};
 u32 seq_2[] = { 0xAAA, 0x555, 0xAAA, 0xAAA, 0x555, 0xAAA};
-unsigned long fileSize = 0;
+u32 fileSize = 0;
 FILE* fd;
 
 u16 swapBits(u16 n) 
@@ -21,26 +21,26 @@ u16 swapBits(u16 n)
 	return result;
 }
 
-u16 read_word_rom(unsigned long address) 
+u16 read_word_rom(u32 address) 
 {
 	return GBAROM[address];
 }
-u16 read_swapped_word_rom(unsigned long address) 
+u16 read_swapped_word_rom(u32 address) 
 {
 	return swapBits(read_word_rom(address));
 }
 
-void write_word_rom(unsigned long address, u16 byte) 
+void write_word_rom(u32 address, u16 byte) 
 {
 	GBA_BUS[address] = byte;
 	swiDelay(10);
 }
-void write_swapped_word_rom(unsigned long address, u16 byte) 
+void write_swapped_word_rom(u32 address, u16 byte) 
 {
 	write_word_rom(address, swapBits(byte));
 }
 
-void ( *( write_word() ) )(unsigned long address, u16 byte) 
+void ( *( write_word() ) )(u32 address, u16 byte) 
 { 
 	switch(cart->busType) {
 		case 0: return write_word_rom; 
@@ -49,7 +49,7 @@ void ( *( write_word() ) )(unsigned long address, u16 byte)
 	
 } 
 
-u16 ( *( read_word() ) )(unsigned long address) 
+u16 ( *( read_word() ) )(u32 address) 
 { 
 	switch(cart->busType) {
 		case 0: return read_word_rom; 
@@ -57,6 +57,18 @@ u16 ( *( read_word() ) )(unsigned long address)
 	}
 	
 } 
+
+bool waitForFlash(u32 address, bool (*isReady)(u16), int timeout){
+	while(timeout && !isReady(read_word_rom(address)) ){
+		swiDelay(30);
+		timeout--;
+	}
+	if(!timeout){
+		return false;
+	}
+	return true;
+}
+
 
 u32* getAddressSeq22XX() 
 {
@@ -124,63 +136,92 @@ void erase22XX()
 	}	
 }
 
-void resetIntel(unsigned long partitionSize) 
+void resetIntel(u32 partitionSize) 
 {
-	for (unsigned long currPartition = 0; currPartition < cart->size; currPartition += partitionSize) {
+	for (u32 currPartition = 0; currPartition < cart->size; currPartition += partitionSize) {
 		write_word()(currPartition, 0xFFFF);
 	}
 }
 
-void unlockSectorIntel(int sector){
+int eraseSectorIntel(int sector){
 	u32 addr = sector*0x10000;
+
+	write_word_rom(addr,0x50);
+	write_word_rom(addr,0xFF);
+	write_word_rom(addr,0x60);
+	write_word_rom(addr,0xD0);
+	write_word_rom(addr,0xFF);
+	write_word_rom(addr,0x20);
+	write_word_rom(addr,0xD0);
 	
-	write_word_rom(addr, 0xFF);
-	write_word_rom(addr, 0x60);
-	write_word_rom(addr, 0xD0);
+	waitForFlash(addr, WAIT_NON_FFFF, 0x10000);
 	
 	u16 statusReg = 0;
 	while ((statusReg | 0xFF7F) != 0xFFFF) {
 		statusReg = read_word_rom(addr);
-		swiDelay(10);
+		swiDelay(30);
 	}
-
-	write_word_rom(addr, 0xFF);
-}
-
-void eraseSectorIntel(int sector){
-	u32 addr = sector*0x10000;
 	
 	write_word_rom(addr, 0xFF);
-	write_word_rom(addr, 0x20);
-	write_word_rom(addr, 0xD0);
-	
-	u16 statusReg = 0;
-	while ((statusReg | 0xFF7F) != 0xFFFF) {
-		statusReg = read_word_rom(addr);
-		swiDelay(10);
-	}
-
-	write_word_rom(addr, 0xFF);
+	return 0;
 }
 
 int writeWordIntel(u32 addr, u16 data){
+	int tries = 0;
+	retry:
+	
 	write_word_rom(addr, 0x50);
 	write_word_rom(addr, 0xFF);
 	
 	write_word_rom(addr, 0x40);
 	write_word_rom(addr, data);
-	u16 statusReg = 0;
-	while ((statusReg | 0xFF7F) != (data | 0xFF7F)) {
-		statusReg = read_word()(addr);
-		swiDelay(10);
+	int timeout = 0x1000000;
+	
+	while(timeout && read_word_rom(addr) == 0xFFFF){timeout--;swiDelay(10);}
+	while(timeout && read_word_rom(addr) == 0){timeout--;swiDelay(10);}
+	while(timeout && !(read_word_rom(addr)&0x80)){
+		timeout--;swiDelay(10);
 	}
+	
+	//Sector was locked, unlock & erase, then try again
+	if(read_word_rom(addr) & 3 && !tries){
+		printTop("Retrying erase at %02X\n", addr);
+		write_word_rom(addr, 0x50);
+		write_word_rom(addr, 0xFF);
+		write_word_rom(addr, 0x60);
+		write_word_rom(addr, 0xD0);
+		write_word_rom(addr, 0xFF);
+		write_word_rom(addr, 0x20);
+		write_word_rom(addr, 0xD0);
+		tries++;
+		waitForFlash(addr, WAIT_NON_FFFF, 0x10000);
+		u16 statusReg = 0;
+		while ((statusReg | 0xFF7F) != 0xFFFF) {
+			statusReg = read_word_rom(addr);
+			swiDelay(10);
+		}
+		goto retry;
+	}
+
+	if(!timeout || (read_word_rom(addr) & 0x10)){
+		write_word_rom(addr, 0xFF);
+		return -1;
+	}
+	
+	write_word_rom(addr, 0xFF);
+	
+	return 0;
+
 }
 
 void eraseIntel()
 {
-	for(int i = 0; i > 128; i++) {
+	int sectorCount = 256;
+	for(int i = 0; i < sectorCount; ++i) {
 		eraseSectorIntel(i);
+		printTop("\rERACE %d", (i + 1) * 100/sectorCount );
 	}
+	printTop("\n");
 }
 
 void detectIntel() {
@@ -201,7 +242,7 @@ void detectIntel() {
 	
 	cart->flashid = read_word_rom(0x1);
 	
-	for(unsigned int i = 0;i < 4;i++){
+	for(u8 i = 0; i < 4; i++){
 		if(cart->flashid == bufSigns[i]) {
 			cart->intelType = 2;
 			write_word_rom(0, 0xFF);
@@ -215,7 +256,20 @@ void detectIntel() {
 		return;
 	}
 	
-	if(cart->flashid == 0xB0 && read_word_rom(0) == 0xB0){
+	if(cart->flashid == 0xB0 && cart->manufactorID == 0xB0) {
+		cart->flashid = 0x88FF;
+		cart->intelType = 1;
+		write_word_rom(0, 0xFF);
+		return;
+	}
+	
+	if((cart->manufactorID == 0x1C) && (cart->flashid == 0xB9)) {
+		cart->intelType = 1;
+		write_word_rom(0, 0xFF);
+		return;
+	}
+	
+	if((cart->manufactorID == 0x1C) && (cart->flashid == 0xB8)) {
 		cart->intelType = 1;
 		write_word_rom(0, 0xFF);
 		return;
@@ -261,141 +315,15 @@ void idFlashrom_GBA()
 	cart->flashid = 0;
 }
 
-void eraseIntel4000_GBA() 
-{
-	// If the game is smaller than 16Mbit only erase the needed blocks
-	unsigned long lastBlock = 0xFFFFFF;
-	if (fileSize < 0xFFFFFF)
-		lastBlock = fileSize;
-
-	// Erase 4 blocks with 16kwords each
-	for (unsigned long currBlock = 0x0; currBlock < 0x1FFFF; currBlock += 0x8000) {
-		// Unlock Block
-		write_word_rom(currBlock, 0x60);
-		write_word_rom(currBlock, 0xD0);
-
-		// Erase Command
-		write_word_rom(currBlock, 0x20);
-		write_word_rom(currBlock, 0xD0);
-
-		// Read the status register
-		u16 statusReg = 0;
-		while ((statusReg | 0xFF7F) != 0xFFFF) {
-			statusReg = read_word_rom(currBlock);
-			swiDelay(10);
-		}
-	}
-
-	// Erase 126 blocks with 64kwords each
-	for (unsigned long currBlock = 0x20000; currBlock < lastBlock; currBlock += 0x1FFFF) {
-		// Unlock Block
-		write_word_rom(currBlock, 0x60);
-		write_word_rom(currBlock, 0xD0);
-
-		// Erase Command
-		write_word_rom(currBlock, 0x20);
-		write_word_rom(currBlock, 0xD0);
-
-		// Read the status register
-		u16 statusReg = 0;
-		while ((statusReg | 0xFF7F) != 0xFFFF) {
-			statusReg = read_word_rom(currBlock);
-			swiDelay(10);
-		}
-	}
-
-	// Erase the second chip
-	if (fileSize > 0xFFFFFF) {
-		// 126 blocks with 64kwords each
-		for (unsigned long currBlock = 0x1000000; currBlock < 0x1FDFFFF; currBlock += 0x1FFFF) {
-			// Unlock Block
-			write_word_rom(currBlock, 0x60);
-			write_word_rom(currBlock, 0xD0);
-
-			// Erase Command
-			write_word_rom(currBlock, 0x20);
-			write_word_rom(currBlock, 0xD0);
-
-			// Read the status register
-			u16 statusReg = 0;
-			while ((statusReg | 0xFF7F) != 0xFFFF) {
-				statusReg = read_word_rom(currBlock);
-				swiDelay(10);
-			}
-		}
-
-		// 4 blocks with 16ku16 each
-		for (unsigned long currBlock = 0x1FE0000; currBlock < 0x1FFFFFF; currBlock += 0x8000) {
-			// Unlock Block
-			write_word_rom(currBlock, 0x60);
-			write_word_rom(currBlock, 0xD0);
-
-			// Erase Command
-			write_word_rom(currBlock, 0x20);
-			write_word_rom(currBlock, 0xD0);
-
-			// Read the status register
-			u16 statusReg = 0;
-			while ((statusReg | 0xFF7F) != 0xFFFF) {
-				statusReg = read_word_rom(currBlock);
-				swiDelay(10);
-			}
-		}
-	}
-}
-
-void eraseIntel4400_GBA() {
-	// If the game is smaller than 32Mbit only erase the needed blocks
-	unsigned long lastBlock = 0x1FFFFFF;
-	if (fileSize < 0x1FFFFFF)
-		lastBlock = fileSize;
-
-	// Erase 4 blocks with 16kwords each
-	for (unsigned long currBlock = 0x0; currBlock < 0x1FFFF; currBlock += 0x8000) {
-		// Unlock Block
-		write_word_rom(currBlock, 0x60);
-		write_word_rom(currBlock, 0xD0);
-
-		// Erase Command
-		write_word_rom(currBlock, 0x20);
-		write_word_rom(currBlock, 0xD0);
-
-		// Read the status register
-		u16 statusReg = 0;
-		while ((statusReg | 0xFF7F) != 0xFFFF) {
-			statusReg = read_word_rom(currBlock);
-			swiDelay(10);
-		}
-	}
-
-	// Erase 255 blocks with 64kwords each
-	for (unsigned long currBlock = 0x20000; currBlock < lastBlock; currBlock += 0x1FFFF) {
-		// Unlock Block
-		write_word_rom(currBlock, 0x60);
-		write_word_rom(currBlock, 0xD0);
-
-		// Erase Command
-		write_word_rom(currBlock, 0x20);
-		write_word_rom(currBlock, 0xD0);
-
-		// Read the status register
-		u16 statusReg = 0;
-		while ((statusReg | 0xFF7F) != 0xFFFF) {
-			statusReg = read_word_rom(currBlock);
-			swiDelay(10);
-		}
-	}
-}
-
 void writeIntel4000_GBA() {
-	for (unsigned long currBlock = 0; currBlock < fileSize; currBlock += 0x20000) {
+	for (u32 currBlock = 0; currBlock < fileSize; currBlock += 0x20000) {
 		// Write to flashrom
-		for (unsigned long currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
+		for (u32 currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
 			// Fill SD buffer
 			fread(sdBuffer, 1, 512, fd);
 
 			// Write 32 words at a time
-			for (int currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 64) {
+			for (u16 currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 64) {
 				// Unlock Block
 				write_word_rom(currBlock + currSdBuffer + currWriteBuffer, 0x60);
 				write_word_rom(currBlock + currSdBuffer + currWriteBuffer, 0xD0);
@@ -436,15 +364,15 @@ void writeIntel4000_GBA() {
 
 void write22XX() {
 	u16 currWord;
-	unsigned long address;
-	for (unsigned long currSector = 0; currSector < fileSize; currSector += 0x20000) {
+	u32 address;
+	for (u32 currSector = 0; currSector < fileSize; currSector += 0x20000) {
 		// Write to flashrom
-		for (unsigned long currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
+		for (u32 currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
 		// Fill SD buffer
 			fread(sdBuffer, 1, 512, fd);
 
 			// Write 32 words at a time
-			for (int currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 2) {
+			for (u16 currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 2) {
 				// Write Buffer command
 				programmCycle22XX();
 
@@ -466,15 +394,15 @@ void write22XX() {
 
 void writeIntel() {
 	u16 currWord;
-	unsigned long address;
-	for (unsigned long currSector = 0; currSector < fileSize; currSector += 0x20000) {
+	u32 address;
+	for (u32 currSector = 0; currSector < fileSize; currSector += 0x20000) {
 		// Write to flashrom
-		for (unsigned long currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
+		for (u32 currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
 		// Fill SD buffer
 			fread(sdBuffer, 1, 512, fd);
 
 			// Write 32 words at a time
-			for (int currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 2) {
+			for (u16 currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 2) {
 				currWord = ( ( sdBuffer[currWriteBuffer + 1] & 0xFF ) << 8 ) | ( sdBuffer[currWriteBuffer] & 0xFF );
 				address = (currSector + currSdBuffer + currWriteBuffer) / 2;
 				writeWordIntel(address, currWord);
@@ -495,7 +423,7 @@ bool flashRepro_GBA() {
 	if (flashid != 0) {
 		printTop("ID: %04X Size: %DMB\n", flashid, cart->size / 0x100000);
 		printTop("%s \n", getManufacturByID(manufactorID));
-		int prev = ftell(fd);
+		u32 prev = ftell(fd);
 		fseek(fd, 0L, SEEK_END);
 		fileSize = ftell(fd);
 		fseek(fd,prev,SEEK_SET); 
@@ -506,18 +434,8 @@ bool flashRepro_GBA() {
 			printTop("File size: %DMB\nErasing...\n", fileSize / 0x100000);
       
 			// Erase needed sectors
-			if (flashid == 0x8802) {
-				eraseIntel4000_GBA();
-				resetIntel(0x200000);
-			}
-			else if (flashid == 0x8816) {
-				eraseIntel4400_GBA();
-				resetIntel(0x200000);
-			}
-			
-			else if (((flashid >> 8) & 0XFF) == 0x88 || ((flashid >> 8) & 0XFF) == 0x89) {
+			if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || flashid == 0xB8 || flashid == 0xB9) {
 				eraseIntel();
-				resetIntel(0x200000);
 			}
 			else if (((flashid >> 8) & 0XFF) == 0x22) {
 				erase22XX();
@@ -528,7 +446,7 @@ bool flashRepro_GBA() {
 			if (flashid == 0x8802 || flashid == 0x8816) {
 				writeIntel4000_GBA();
 			}
-			if (((flashid >> 8) & 0xFF) == 0x88) {
+			else if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || flashid == 0xB8 || flashid == 0xB9) {
 				writeIntel();
 			}
 			else if (((flashid >> 8) & 0xFF) == 0x22) {
