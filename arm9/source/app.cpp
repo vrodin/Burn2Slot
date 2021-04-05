@@ -106,7 +106,7 @@ void detect22XX()
 			}
 		}
 	}
-	
+	cart->adressSeqType = 0
 	cart->busType = 0;
 }
 
@@ -378,7 +378,7 @@ void write22XX() {
 
 				currWord = ( ( sdBuffer[currWriteBuffer + 1] & 0xFF ) << 8 ) | ( sdBuffer[currWriteBuffer] & 0xFF );
 				address = (currSector + currSdBuffer + currWriteBuffer) / 2;
-				write_word()(address, currWord);
+				write_word_rom(address, currWord);
 
 				// Read the status register
 				u16 statusReg = read_word()(address);
