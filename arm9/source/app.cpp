@@ -106,7 +106,7 @@ void detect22XX()
 			}
 		}
 	}
-	cart->adressSeqType = 0
+	cart->adressSeqType = 0;
 	cart->busType = 0;
 }
 
