@@ -6,18 +6,38 @@ u8* sdBuffer = (u8*)malloc(sizeof(u8) * 512);
 CartInfo* cart = (CartInfo*)malloc(sizeof(CartInfo) + 1);
 u32 seq_1[] = { 0x555, 0x2AA, 0x555, 0x555, 0x2AA, 0x555};
 u32 seq_2[] = { 0xAAA, 0x555, 0xAAA, 0xAAA, 0x555, 0xAAA};
+u32 seq_3[] = { 0x5555, 0x2AAA, 0x5555, 0x5555, 0x2AAA, 0x5555};
+u8  busMSP512[] = { 15, 7, 14, 6, 13, 5, 12, 4, 0, 8, 1, 9, 2, 10, 3, 11};
 u32 fileSize = 0;
 FILE* fd;
 
-u16 swapBits(u16 n) 
-{
-	u16 p1 = 0;
-	u16 p2 = 1;
-	u16 bit1 = (n >> p1) & 1;
-	u16 bit2 = (n >> p2) & 1;
+u16 swapBits(u16 data) 
+{ 
+	u16 bit1 = (data >> 0) & 1;
+	u16 bit2 = (data >> 1) & 1;
 	u16 x = (bit1 ^ bit2);
-	x = (x << p1) | (x << p2);
-	u16 result = n ^ x;
+	x = (x << 0) | (x << 1);
+	u16 result = data ^ x;
+	return result;
+}
+
+u16 swapBitsToMSP512(u16 data) 
+{
+	u16 result = 0;
+	for(int i = 0; i < 16; ++i) {
+		result |= ((data >> i) & 1) << busMSP512[i];
+	}
+
+	return result;
+}
+
+u16 swapBitsFromMSP512(u16 data) 
+{
+	u16 result = 0;
+	for(int i = 0; i < 16; ++i) {
+		result |= ((data >> busMSP512[i]) & 1) << i;
+	}
+
 	return result;
 }
 
@@ -25,9 +45,15 @@ u16 read_word_rom(u32 address)
 {
 	return GBAROM[address];
 }
+
 u16 read_swapped_word_rom(u32 address) 
 {
 	return swapBits(read_word_rom(address));
+}
+
+u16 read_swapped_word_rom_msp512(u32 address) 
+{
+	return swapBitsFromMSP512(read_word_rom(address));
 }
 
 void write_word_rom(u32 address, u16 byte) 
@@ -35,9 +61,15 @@ void write_word_rom(u32 address, u16 byte)
 	GBA_BUS[address] = byte;
 	swiDelay(10);
 }
+
 void write_swapped_word_rom(u32 address, u16 byte) 
 {
 	write_word_rom(address, swapBits(byte));
+}
+
+void write_swapped_word_rom_msp512(u32 address, u16 byte) 
+{
+	write_word_rom(address, swapBitsToMSP512(byte));
 }
 
 void ( *( write_word() ) )(u32 address, u16 byte) 
@@ -45,6 +77,7 @@ void ( *( write_word() ) )(u32 address, u16 byte)
 	switch(cart->busType) {
 		case 0: return write_word_rom; 
 		case 1: return write_swapped_word_rom; 
+		case 2: return write_swapped_word_rom_msp512;
 	}
 	
 } 
@@ -53,7 +86,8 @@ u16 ( *( read_word() ) )(u32 address)
 { 
 	switch(cart->busType) {
 		case 0: return read_word_rom; 
-		case 1: return read_swapped_word_rom; 
+		case 1: return read_swapped_word_rom;
+		case 2: return read_swapped_word_rom_msp512; 
 	}
 	
 } 
@@ -76,6 +110,7 @@ u32* getAddressSeq22XX()
 	switch(cart->adressSeqType) {
 		case 0: data_sec = seq_1; break;
 		case 1: data_sec = seq_2; break;
+		case 2: data_sec = seq_3; break;
 	}
 	
 	return data_sec;
@@ -90,9 +125,9 @@ void detect22XX()
 {
 	u8 data_sec[] = { 0xAA, 0x55, 0x90};
 	u16 flashid, manufactorID;
-	for(cart->adressSeqType = 0; cart->adressSeqType <= 1; cart->adressSeqType++) {
+	for(cart->adressSeqType = 0; cart->adressSeqType <= 2; cart->adressSeqType++) {
 		u32* addr_sec = getAddressSeq22XX();
-		for(cart->busType = 0; cart->busType <= 1; cart->busType++) {
+		for(cart->busType = 0; cart->busType <= 2; cart->busType++) {
 			for(u8 i = 0; i < 3; ++i) {
 				write_word()(addr_sec[i], data_sec[i]);
 			}
@@ -144,7 +179,7 @@ void resetIntel(u32 partitionSize)
 }
 
 int eraseSectorIntel(int sector){
-	u32 addr = sector*0x10000;
+	u32 addr = sector*0x8000;
 
 	write_word_rom(addr,0x50);
 	write_word_rom(addr,0xFF);
@@ -216,7 +251,7 @@ int writeWordIntel(u32 addr, u16 data){
 
 void eraseIntel()
 {
-	int sectorCount = 256;
+	int sectorCount = 512;
 	for(int i = 0; i < sectorCount; ++i) {
 		eraseSectorIntel(i);
 		printTop("\rERACE %d", (i + 1) * 100/sectorCount );
@@ -262,14 +297,8 @@ void detectIntel() {
 		write_word_rom(0, 0xFF);
 		return;
 	}
-	
-	if((cart->manufactorID == 0x1C) && (cart->flashid == 0xB9)) {
-		cart->intelType = 1;
-		write_word_rom(0, 0xFF);
-		return;
-	}
-	
-	if((cart->manufactorID == 0x1C) && (cart->flashid == 0xB8)) {
+		
+	if(cart->manufactorID == 0x1C) {
 		cart->intelType = 1;
 		write_word_rom(0, 0xFF);
 		return;
@@ -434,7 +463,7 @@ bool flashRepro_GBA() {
 			printTop("File size: %DMB\nErasing...\n", fileSize / 0x100000);
       
 			// Erase needed sectors
-			if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || flashid == 0xB8 || flashid == 0xB9) {
+			if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || manufactorID == 0x1C) {
 				eraseIntel();
 			}
 			else if (((flashid >> 8) & 0XFF) == 0x22) {
@@ -446,7 +475,7 @@ bool flashRepro_GBA() {
 			if (flashid == 0x8802 || flashid == 0x8816) {
 				writeIntel4000_GBA();
 			}
-			else if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || flashid == 0xB8 || flashid == 0xB9) {
+			else if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || manufactorID == 0x1C) {
 				writeIntel();
 			}
 			else if (((flashid >> 8) & 0xFF) == 0x22) {
