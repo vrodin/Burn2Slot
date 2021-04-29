@@ -1,11 +1,12 @@
 # Burn2Slot
 ## Homebrew for re-programm GBA bootlegs on DS
 Support:
-* Macronix MX29GL128E
-* Fujitsu MSP55LV128N
-* Intel PC28F256M29
-* ST M29W128GH
-and same... 
+* Macronix
+* Fujitsu
+* Intel
+* ST
+* Spansion
+* Mitsubishi 
 
 ## Research and References
 
@@ -14,4 +15,5 @@ and same...
 - [Flash Memory Interface](https://www.fujitsu.com/downloads/MICRO/fmal/e-ds/e520904.pdf)
 - [cartreader by sanni](https://github.com/sanni/cartreader)
 - [nds-gbabf by nflsilva](https://github.com/nflsilva/nds-gbabf)
+- [gbabf by Fexean](https://gitlab.com/Fexean/gbabf)
 - [GBxCart-RW by insidegadgets](https://github.com/insidegadgets/GBxCart-RW)
