@@ -25,7 +25,7 @@ u16 swapBitsToMSP512(u16 data)
 {
 	u16 result = 0;
 	for(int i = 0; i < 16; ++i) {
-		result |= ((data >> i) & 1) << busMSP512[i];
+		result |= ((data >> busMSP512[i]) & 1) << i;
 	}
 
 	return result;
@@ -35,7 +35,7 @@ u16 swapBitsFromMSP512(u16 data)
 {
 	u16 result = 0;
 	for(int i = 0; i < 16; ++i) {
-		result |= ((data >> busMSP512[i]) & 1) << i;
+		result |= ((data >> i) & 1) << busMSP512[i];
 	}
 
 	return result;
@@ -145,7 +145,7 @@ void detect22XX()
 	cart->busType = 0;
 }
 
-void programmCycle22XX() 
+void writeWord22XX(u32 addr, u16 data) 
 {
 	u8 data_sec[] = { 0xAA, 0x55, 0xA0};
 	u32* addr_sec = getAddressSeq22XX();
@@ -153,20 +153,28 @@ void programmCycle22XX()
 	for(u8 i = 0; i < 3; ++i) {
 		write_word()(addr_sec[i], data_sec[i]);
 	}
+	write_word_rom(addr, data);
+	
+	u16 statusReg = read_word_rom(addr);
+	while (statusReg != data) {
+		statusReg = read_word_rom(addr);
+		swiDelay(10);
+	}
 }
 
-void erase22XX() 
+void eraseSector22XX(u32 addr)
 {
-	u8 data_sec[] = { 0xAA, 0x55, 0x80, 0xAA, 0x55, 0x10};
+	u8 data_sec[] = { 0xAA, 0x55, 0x80, 0xAA, 0x55};
 	u32* addr_sec = getAddressSeq22XX();
 
-	for(u8 i = 0; i < 6; ++i) {
+	for(u8 i = 0; i < 5; ++i) {
 		write_word()(addr_sec[i], data_sec[i]);
 	}
+	write_word()(addr, 0x30);
 
 	u16 statusReg = 0;
 	while ((statusReg | 0xFF7F) != 0xFFFF) {
-		statusReg = read_word()(0x0);
+		statusReg = read_word()(addr);
 		swiDelay(10);
 	}	
 }
@@ -178,14 +186,11 @@ void resetIntel(u32 partitionSize)
 	}
 }
 
-int eraseSectorIntel(int sector){
-	u32 addr = sector*0x8000;
-
+int eraseSectorIntel(u32 addr)
+{
 	write_word_rom(addr,0x50);
-	write_word_rom(addr,0xFF);
 	write_word_rom(addr,0x60);
 	write_word_rom(addr,0xD0);
-	write_word_rom(addr,0xFF);
 	write_word_rom(addr,0x20);
 	write_word_rom(addr,0xD0);
 	
@@ -201,7 +206,8 @@ int eraseSectorIntel(int sector){
 	return 0;
 }
 
-int writeWordIntel(u32 addr, u16 data){
+int writeWordIntel(u32 addr, u16 data)
+{
 	int tries = 0;
 	retry:
 	
@@ -221,20 +227,7 @@ int writeWordIntel(u32 addr, u16 data){
 	//Sector was locked, unlock & erase, then try again
 	if(read_word_rom(addr) & 3 && !tries){
 		printTop("Retrying erase at %02X\n", addr);
-		write_word_rom(addr, 0x50);
-		write_word_rom(addr, 0xFF);
-		write_word_rom(addr, 0x60);
-		write_word_rom(addr, 0xD0);
-		write_word_rom(addr, 0xFF);
-		write_word_rom(addr, 0x20);
-		write_word_rom(addr, 0xD0);
-		tries++;
-		waitForFlash(addr, WAIT_NON_FFFF, 0x10000);
-		u16 statusReg = 0;
-		while ((statusReg | 0xFF7F) != 0xFFFF) {
-			statusReg = read_word_rom(addr);
-			swiDelay(10);
-		}
+		eraseSectorIntel(addr);
 		goto retry;
 	}
 
@@ -249,22 +242,22 @@ int writeWordIntel(u32 addr, u16 data){
 
 }
 
-void eraseIntel()
+void erase(u32 needSpace, bool isIntel)
 {
-	int sectorCount = 512;
-	for(int i = 0; i < sectorCount; ++i) {
-		eraseSectorIntel(i);
-		printTop("\rERACE %d", (i + 1) * 100/sectorCount );
+	for(int addr = 0; addr < needSpace; addr += 0x8000) {
+		if(isIntel) eraseSectorIntel(addr);
+		else eraseSector22XX(addr);
+		printTop("\rERACE %d\%", (addr + 0x8000) * 100/needSpace );
 	}
 	printTop("\n");
+	reset22XX();
 }
 
-void detectIntel() {
-
+void detectIntel() 
+{
 	cart->intelType = 0;
 	u16 bufSigns[] = {0x8902, 0x8904, 0x887D, 0x887E, 0x88B0};
 	
-	write_word_rom(0, 0xFF);
 	write_word_rom(0, 0x50);
 	write_word_rom(0, 0x90);
 	cart->manufactorID = read_word_rom(0x0);
@@ -344,7 +337,8 @@ void idFlashrom_GBA()
 	cart->flashid = 0;
 }
 
-void writeIntel4000_GBA() {
+void writeIntel4000_GBA() 
+{
 	for (u32 currBlock = 0; currBlock < fileSize; currBlock += 0x20000) {
 		// Write to flashrom
 		for (u32 currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
@@ -391,37 +385,8 @@ void writeIntel4000_GBA() {
 	}
 }
 
-void write22XX() {
-	u16 currWord;
-	u32 address;
-	for (u32 currSector = 0; currSector < fileSize; currSector += 0x20000) {
-		// Write to flashrom
-		for (u32 currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
-		// Fill SD buffer
-			fread(sdBuffer, 1, 512, fd);
-
-			// Write 32 words at a time
-			for (u16 currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 2) {
-				// Write Buffer command
-				programmCycle22XX();
-
-				currWord = ( ( sdBuffer[currWriteBuffer + 1] & 0xFF ) << 8 ) | ( sdBuffer[currWriteBuffer] & 0xFF );
-				address = (currSector + currSdBuffer + currWriteBuffer) / 2;
-				write_word_rom(address, currWord);
-
-				// Read the status register
-				u16 statusReg = read_word()(address);
-
-				while ((statusReg | 0xFF7F) != (currWord | 0xFF7F)) {
-					statusReg = read_word()(address);
-					swiDelay(10);
-				}
-			}
-		}
-	}
-}
-
-void writeIntel() {
+void writeByWord(bool isIntel) 
+{
 	u16 currWord;
 	u32 address;
 	for (u32 currSector = 0; currSector < fileSize; currSector += 0x20000) {
@@ -434,14 +399,17 @@ void writeIntel() {
 			for (u16 currWriteBuffer = 0; currWriteBuffer < 512; currWriteBuffer += 2) {
 				currWord = ( ( sdBuffer[currWriteBuffer + 1] & 0xFF ) << 8 ) | ( sdBuffer[currWriteBuffer] & 0xFF );
 				address = (currSector + currSdBuffer + currWriteBuffer) / 2;
-				writeWordIntel(address, currWord);
+				if(isIntel) writeWordIntel(address, currWord);
+				else writeWord22XX(address, currWord);
 			}
+			printTop("\rWriting %d\%", (currSector + currSdBuffer + 512) * 100/fileSize );
 		}
 	}
+	printTop("\n");
 }
 
-bool flashRepro_GBA() {
-
+bool flashRepro_GBA() 
+{
 	std::string filename = browseForFile({".gba"});
 	fd = fopen(&filename[0], "rb");
 	// Check flashrom ID's
@@ -464,22 +432,21 @@ bool flashRepro_GBA() {
       
 			// Erase needed sectors
 			if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || manufactorID == 0x1C) {
-				eraseIntel();
+				erase(fileSize, true);
 			}
 			else if (((flashid >> 8) & 0XFF) == 0x22) {
-				erase22XX();
-				reset22XX();
+				erase(fileSize, false);
 			}
+			
 			//Write flashrom
-			printTop("Writing ");
 			if (flashid == 0x8802 || flashid == 0x8816) {
 				writeIntel4000_GBA();
 			}
 			else if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || manufactorID == 0x1C) {
-				writeIntel();
+				writeByWord(true);
 			}
 			else if (((flashid >> 8) & 0xFF) == 0x22) {
-				write22XX();
+				writeByWord(false);
 			}
 			
 			return true;
