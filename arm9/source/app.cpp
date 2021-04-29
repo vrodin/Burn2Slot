@@ -432,10 +432,10 @@ bool flashRepro_GBA()
       
 			// Erase needed sectors
 			if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || manufactorID == 0x1C) {
-				erase(fileSize, true);
+				erase(fileSize/2, true);
 			}
 			else if (((flashid >> 8) & 0XFF) == 0x22) {
-				erase(fileSize, false);
+				erase(fileSize/2, false);
 			}
 			
 			//Write flashrom
