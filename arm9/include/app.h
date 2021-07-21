@@ -31,6 +31,7 @@ typedef struct{
 	
 	u16 flashid;
 	u16 manufactorID;
+	u16 bufferSize;
 	u32 size;
 } CartInfo;
 

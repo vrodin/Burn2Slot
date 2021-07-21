@@ -9,11 +9,10 @@ u32 seq_2[] = { 0xAAA, 0x555, 0xAAA, 0xAAA, 0x555, 0xAAA};
 u32 seq_3[] = { 0x5555, 0x2AAA, 0x5555, 0x5555, 0x2AAA, 0x5555};
 u8  busMSP512[] = { 15, 7, 14, 6, 13, 5, 12, 4, 0, 8, 1, 9, 2, 10, 3, 11};
 u32 fileSize = 0;
+u16 bufferSize = 0;
 FILE* fd;
 
-u32 minLag = 0x2;
-u32 maxLag = 0x10000;
-u32 lag = 0x2;
+u32 lag = 0xF;
 
 void wait(u32 count = 1)
 {
@@ -137,26 +136,22 @@ void detect22XX()
 {
 	u8 data_sec[] = { 0xAA, 0x55, 0x90};
 	u16 flashid, manufactorID;
-	for(lag = minLag; lag <= maxLag; lag = lag << 1) {
-		for(cart->adressSeqType = 0; cart->adressSeqType <= 2; cart->adressSeqType++) {
-			u32* addr_sec = getAddressSeq22XX();
-			for(cart->busType = 0; cart->busType <= 2; cart->busType++) {
-				for(u8 i = 0; i < 3; ++i) {
-					write_word()(addr_sec[i], data_sec[i]);
-				}
-				flashid = read_word()(0x1);
-				manufactorID = read_word()(0x0);
-				printTop("ID: %04X\n", flashid);
-				if (((flashid >> 8) & 0xFF) == 0x22 || flashid == 0x0F08) {
-					cart->flashid = flashid;
-					cart->manufactorID = manufactorID;
-					reset22XX();
-					return;
-				}
+	for(cart->adressSeqType = 0; cart->adressSeqType <= 2; cart->adressSeqType++) {
+		u32* addr_sec = getAddressSeq22XX();
+		for(cart->busType = 0; cart->busType <= 2; cart->busType++) {
+			for(u8 i = 0; i < 3; ++i) {
+				write_word()(addr_sec[i], data_sec[i]);
+			}
+			flashid = read_word()(0x1);
+			manufactorID = read_word()(0x0);
+			if (((flashid >> 8) & 0xFF) == 0x22 || flashid == 0x0F08) {
+				cart->flashid = flashid;
+				cart->manufactorID = manufactorID;
+				reset22XX();
+				return;
 			}
 		}
 	}
-	lag = minLag;
 	cart->adressSeqType = 0;
 	cart->busType = 0;
 }
@@ -277,9 +272,9 @@ void detectIntel()
 {
 	cart->intelType = 0;
 	u16 bufSigns[] = {0x8902, 0x8904, 0x887D, 0x887E, 0x88B0};
-	lag = 0x100;
-	write_word_rom(0, 0x50);
-	write_word_rom(0, 0x90);
+	write_word_rom(0x0, 0xFF);
+	write_word_rom(0x0, 0x50);
+	write_word_rom(0x0, 0x90);
 	cart->manufactorID = read_word_rom(0x0);
 	cart->flashid = read_word_rom(0x1);
 	
@@ -309,7 +304,6 @@ void detectIntel()
 		write_word_rom(0, 0xFF);
 		return;
 	}
-	lag = 0xF;
 	cart->intelType = 0;
 	cart->flashid = 0;
 }
@@ -347,6 +341,23 @@ void idFlashrom_GBA()
 	}
 	
 	cart->flashid = 0;
+}
+
+void chipSize()
+{
+	write_word()(0x0, 0x50);
+	write_word()(0x0, 0xFF);
+	write_word()(0x55, 0x98);
+	if( read_word()(0x10) == 0x51 &&
+	    read_word()(0x11) == 0x52 &&
+	    read_word()(0x12) == 0x59
+	    ) {
+	    	cart->size = (u32)(1<<read_word()(0x27));
+	    	cart->bufferSize = (u16)(1<<read_word()(0x2A));
+	    	write_word()(0x0, 0x50);
+		write_word()(0x0, 0xFF);
+		write_word()(0, 0xF0);
+	    }
 }
 
 void writeIntel4000_GBA() 
@@ -426,11 +437,13 @@ bool flashRepro_GBA()
 	fd = fopen(&filename[0], "rb");
 	// Check flashrom ID's
 	idFlashrom_GBA();
+	chipSize();
 	u16 flashid = cart->flashid;
 	u16 manufactorID = cart->manufactorID;
+	u32 chipSize = cart->size;
 	
 	if (flashid != 0) {
-		printTop("ID: %04X Size: %DMB\n", flashid, cart->size / 0x100000);
+		printTop("ID: %04X Size: %DMB\n", flashid, chipSize / 0x100000);
 		printTop("%s \n", getManufacturByID(manufactorID));
 		u32 prev = ftell(fd);
 		fseek(fd, 0L, SEEK_END);
@@ -446,7 +459,7 @@ bool flashRepro_GBA()
 			if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || manufactorID == 0x1C) {
 				erase(fileSize/2, true);
 			}
-			else if (((flashid >> 8) & 0XFF) == 0x22 || flashid == 0x0F08) {
+			else if (((flashid >> 8) & 0XFF) == 0x22) {
 				erase(fileSize/2, false);
 			}
 			
@@ -454,7 +467,7 @@ bool flashRepro_GBA()
 			if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || manufactorID == 0x1C) {
 				writeByWord(true);
 			}
-			else if (((flashid >> 8) & 0xFF) == 0x22 || flashid == 0x0F08) {
+			else if (((flashid >> 8) & 0xFF) == 0x22) {
 				writeByWord(false);
 			}
 			
