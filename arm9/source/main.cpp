@@ -62,8 +62,12 @@ void BootGbaARM9(u32 useBottomScreen){
 int main(){
 	initGraphics();
 	check();
+	if (!fatInitDefault()) {
+		iprintf ("fatinitDefault failed!\n");
+	}
 	keysSetRepeat(25,5);
 	sysSetBusOwners(BUS_OWNER_ARM9,BUS_OWNER_ARM9);
+	
 	while(1) {
 		if(flashRepro_GBA())BootGbaARM9(1);	
 	}

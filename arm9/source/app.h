@@ -14,12 +14,14 @@
 extern void printTop(const char* str, ...);
 
 typedef struct{
-	u8  busType;
-	u8  adressSeqType;
-	u16 flashid;
-	u16 manufactorID;
+	u8 flashType;
+	u8 busType;
+	u8 AddrType;
+	u8 DataType;
+	u16 FID;
+	u16 MID;
 	u32 size;
-} CartInfo;
+} CartI;
 
 bool flashRepro_GBA();
 void check();
