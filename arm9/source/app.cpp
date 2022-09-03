@@ -3,44 +3,51 @@
 
 u8* sdBuffer = (u8*)malloc(sizeof(u8) * 512);
 CartI CartInfo;
-
-u16 addr_1[] = { 0x555, 0x2AA, 0x555, 0x555, 0x2AA, 0x555};
-u16 addr_2[] = { 0xAAA, 0x555, 0xAAA, 0xAAA, 0x555, 0xAAA};
-u16 addr_3[] = { 0x5555, 0x2AAA, 0x5555, 0x5555, 0x2AAA, 0x5555};
-
-u16 data_1[] = { 0xAA, 0x55, 0x90};
-u16 data_2[] = { 0xA9, 0x56, 0x90};
-u16 data_3[] = { 0xAA, 0x55, 0x80, 0xAA, 0x55, 0xA0};
-u16 data_4[] = { 0xA9, 0x56, 0x80, 0xA9, 0x56, 0xA0};
-
-u16* getAddr(){
-	switch(CartInfo.AddrType){
-		case 0: return addr_1;
-		case 1: return addr_2;
-		case 2: return addr_3;
-	}
-}
-
-
-u16* getDataType(){
-	switch(CartInfo.DataType){
-		case 0: return data_1;
-		case 1: return data_2;
-	}
-}
-
-u16* getDataBurn(){
-	switch(CartInfo.DataType){
-		case 0: return data_3;
-		case 1: return data_4;
-	}
-}
-
-
-u8  busMSP512[] = { 15, 7, 14, 6, 13, 5, 12, 4, 0, 8, 1, 9, 2, 10, 3, 11};
 u32 fileSize = 0;
 FILE* fd;
 
+u16 addr_0[] = { 0x555, 0x2AA, 0x555, 0x555, 0x2AA };
+u16 addr_1[] = { 0xAAA, 0x555, 0xAAA, 0xAAA, 0x555 };
+u16 addr_2[] = { 0x5555, 0x2AAA, 0x5555, 0x5555, 0x2AAA };
+u16 addr_3[] = { 0xAAA, 0x554, 0xAAA, 0xAAA, 0x554 };//0<<1
+u16 addr_4[] = { 0x1554, 0xAAA, 0x1554, 0x1554, 0xAAA };//1<<1
+u16 addr_5[] = { 0xAAAA, 0x5554, 0xAAAA, 0xAAAA, 0x5554 };//2<<1
+
+u16 data_0[] = { 0xAA, 0x55, 0x90};
+u16 data_1[] = { 0xA9, 0x56, 0x90};
+u16 data_2[] = { 0xAAA9, 0x5556, 0x9090};
+
+u16 plan_0[] = { 0xAA, 0x55, 0x80, 0xAA, 0x55, 0xA0 };
+u16 plan_1[] = { 0xA9, 0x56, 0x80, 0xAA, 0x55, 0xA0 };
+u16 plan_2[] = { 0xAAA9, 0x5556, 0x8080, 0xAAA9, 0x5556, 0xA0A0 };, 0xA0};
+
+u16* getAddr(u16 a){
+	switch(a){
+		case 0: return addr_0;
+		case 1: return addr_1;
+		case 2: return addr_2;
+		case 3: return addr_3;
+		case 4: return addr_4;
+		case 5: return addr_5;
+	}
+}
+
+
+u16* getDataType(u16 b){
+	switch(b){
+		case 0: return data_0;
+		case 1: return data_1;
+		case 2: return data_2;
+	}
+}
+
+u16* getDataBurn(u16 b){
+	switch(b){
+		case 0: return plan_0;
+		case 1: return plan_1;
+		case 2: return plan_2;
+	}
+}
 
 void wait(u32 count = 1){
 	while(count){
@@ -56,24 +63,6 @@ u16 swapBits(u16 data){
 	u16 x = (bit1 ^ bit2);
 	x = (x << 0) | (x << 1);
 	u16 result = data ^ x;
-	return result;
-}
-
-
-u16 swapBitsToMSP512(u16 data){
-	u16 result = 0;
-	for(int i = 0; i < 16; ++i){
-		result |= ((data >> busMSP512[i]) & 1) << i;
-	}
-	return result;
-}
-
-
-u16 swapBitsFromMSP512(u16 data){
-	u16 result = 0;
-	for(int i = 0; i < 16; ++i){
-		result |= ((data >> i) & 1) << busMSP512[i];
-	}
 	return result;
 }
 
@@ -113,7 +102,6 @@ void write_cho(u32 address, u16 byte){
 	switch(CartInfo.busType){
 		case 0: return write_word(address, byte); 
 		case 1: return write_swapword(address, byte);
-		case 2: return write_swapword_msp512(address, byte);
 	}
 }
 
@@ -121,7 +109,6 @@ u16 read_cho(u32 address){
 	switch(CartInfo.busType){
 		case 0: return read_word(address);
 		case 1: return read_swapword(address);
-		case 2: return read_swapword_msp512(address); 
 	}
 }
 
@@ -129,7 +116,7 @@ u16 read_cho(u32 address){
 void eraseSectorAMD(u32 addr){
 	u16* data_sec = getDataBurn();
 	u16* addr_sec = getAddr();
-	for(u8 i = 0; i < 4; ++i){//5
+	for(u8 i = 0; i < 5; ++i){
 		write_cho(addr_sec[i], data_sec[i]);
 	}
 	write_cho(addr, 0x30);
@@ -145,7 +132,7 @@ void eraseSectorAMD(u32 addr){
 void writeWordAMD(u32 addr, u16 data){
 	u16* data_sec = getDataBurn();
 	u16* addr_sec = getAddr();
-	for(u8 i = 0; i < 2; ++i){//3
+	for(u8 i = 0; i < 3; ++i){
 		write_cho(addr_sec[i], data_sec[i]);
 	}
 	write_word(addr, data);
@@ -287,54 +274,68 @@ void detectIntel(){
 	write_word(0x0, 0xFF);
 }
 
-
-
 void detectAMD(){
-	u16 flashid, manufactorID;
-	for(CartInfo.AddrType = 0; CartInfo.AddrType < 3; CartInfo.AddrType++){
-		u16* addr_sec = getAddr();
-		for(CartInfo.DataType = 0; CartInfo.DataType < 2; CartInfo.DataType++){
-			u16* data_sec = getDataType();
-			for(CartInfo.busType = 0; CartInfo.busType < 3; CartInfo.busType++){
-				for(u8 i = 0; i < 2; ++i){
-					write_cho(addr_sec[i], data_sec[i]);
+	for(u8 x= 0; x < 6; x++){//地址
+		u16* addr_sec = getAddr(x);
+		for(u8 y = 0; y < 3; y++){//数据
+			u16* data_sec = getData(y);
+			for(u8 z = 0; z < 2; z++){//写入是否fan转
+				for(int i = 0; i < 3; i++){//写入三行解锁指令
+					writecho(addr_sec[i], data_sec[i], z);
 				}
-				flashid = read_cho(0x1);
-				manufactorID = read_cho(0x0);
-				if (((flashid >> 8) & 0xFF) == 0x22){// || flashid == 0x0084){//关键判断部分，决定模式的
+				flashid = readword(0x1);
+				manufactorID = readword(0x0);
+				if (((flashid >> 8) & 0xFF) == 0x22 || manufactorID == 0x0102 || manufactorID == 0x0404){//关键判断部分，决定模式的
+					if (flashid == manufactorID){
+						CartInfo.FID = readword(0x2);
+					}else{
 					CartInfo.FID = flashid;
+					}
 					CartInfo.MID = manufactorID;
-					write_cho(addr_sec[0], 0x98);//获取CFI
-					CartInfo.size = (u32)(1<<read_cho(0x27));
-					CartInfo.flashType = 2;
-					printf("\x1b[15;2Haddr:%d data:%d type:%d ", CartInfo.AddrType, CartInfo.DataType, CartInfo.busType);
-					write_cho(0, 0xF0);
+					printf(COLOR_RED "add_%ld  data_%ld  type_%ld\n" COLOR_END,x ,y, z);
+					printf("addr_0=0x555,0x2AA,0x555\naddr_1=0xAAA,0x555,0xAAA\naddr_2=0x5555,0x2AAA,0x5555\naddr_3=0xAAA,0x554,0xAAA\naddr_4=0x1554,0xAAA,0x1554\naddr_5=0xAAAA,0x5554,0xAAAA" COLOR_END);
+					printf(COLOR_DGREEN "\ndata_0=0xAA,0x55,0x90\ndata_1=0xA9,0x56,0x90\ndata_2=0xAAA9,0x5556,0x9090\n" COLOR_END);
+					printf(COLOR_RED "0:%x 1:%x \n" COLOR_END,MMD0,FID0);
+
+					CartInfo.AMDAddr = x;//获取识别后的参数，用于擦写
+					CartInfo.AMDData = y;
+					CartInfo.AMDType = z;
+					
+					//获取CFI后前方指令消失
+					if (CartInfo.AMDData == 2){
+						writeword(addr_sec[0], 0x9898);
+						CartInfo.size= (u32)(1<<readword(0x27)) + (u32)(1<<readword(0x4E));
+						return;
+					}
+					writeword(addr_sec[0], 0x98);//获取CFI
+					CartInfo.size= (u32)(1<<readword(0x27));
 					return;
 				}
 			}
 		}
 	}
-	write_cho(0, 0xF0);
-	CartInfo.AddrType = 0;
-	CartInfo.DataType = 0;
-	CartInfo.busType = 0;
 }
 
 
 void idFlashrom_GBA(){
 	CartInfo.FID = 0;
-	
-	detectIntel();
-	if (CartInfo.FID != 0){
-		return;
+	CartInfo.size = 0;
+	CartInfo.MID = 0;
+	FID0 = readword(0x1);
+	MMD0 = readword(0x0);
+	detectINTEL();
+	if (CartInfo.FID != 0){return;}
+	else{
+		detectAMD();
+		if (CartInfo.FID != 0){return;}
+		else{
+			CartInfo.FID = 0;
+			CartInfo.size = 0;
+			CartInfo.MID = 0;
+			FID0 = 0;
+			MMD0 = 0;
+		}
 	}
-	
-	detectAMD();
-	if(CartInfo.FID != 0){
-		return;
-	}
-
-	CartInfo.FID = 0;
 }
 
 
