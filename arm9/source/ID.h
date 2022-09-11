@@ -9,12 +9,11 @@
 #define SST_ID			0xBF
 #define ST_ID			0x20
 #define WINBOND_ID		0xDA
-#define MITSUBISHI_ID		0x1C
+#define MITSUBISHI_ID	0x1C
 
 char* manufactur = (char*)malloc(sizeof(char) * 12);
 
-static char* getManufacturByID(u8 ID)
-{
+static char* getManufacturByID(u8 ID){
 	switch(ID) {
 		case ALLIANCE_ID:
 			manufactur = "Alliance";
@@ -51,6 +50,5 @@ static char* getManufacturByID(u8 ID)
 		default:
 			manufactur = "Unknown";
 	}
-	
 	return manufactur;
 }
