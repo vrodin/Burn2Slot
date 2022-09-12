@@ -9,18 +9,24 @@
 #include "fat.h"
 #include "file_browse.h"
 
-#define WAIT_NON_FFFF [](u16 a){return a!=0xFFFF;}
-
 extern void printTop(const char* str, ...);
 
 typedef struct{
-	u8 flashType;
-	u8 busType;
-	u8 AddrType;
-	u8 DataType;
+	union {
+		u8 busType;
+		u8 AMDType;
+	};
+	union {
+		u8 AMDAddr;
+		u8 AddrType;
+	};	
+	union {
+		u8 flashType;
+		u8 AMDData;
+	};	
 	u16 FID;
 	u16 MID;
-	u32 size;
+	u32 size;	
 } CartI;
 
 bool flashRepro_GBA();
