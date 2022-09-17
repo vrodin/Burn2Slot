@@ -261,7 +261,10 @@ int writeWordIntel(u32 addr, u16 data)
 void erase(u32 needSpace, bool isIntel)
 {
 	for(int addr = 0; addr < needSpace; addr += 0x8000) {
-		if(isIntel) eraseSectorIntel(addr);
+		if(isIntel) {
+			for(int smallAddr = addr; smallAddr < addr + 0x8000; smallAddr += 0x2000)
+				eraseSectorIntel(smallAddr);
+		}
 		else eraseSector22XX(addr);
 		printTop("\rERACE %d\%", (addr + 0x8000) * 100/needSpace );
 	}
@@ -414,7 +417,7 @@ void writeByWord(bool isIntel)
 	u32 address;
 	for (u32 currSector = 0; currSector < fileSize; currSector += 0x20000) {
 		// Write to flashrom
-		for (u32 currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 512) {
+		for (u32 currSdBuffer = 0; currSdBuffer < 0x20000; currSdBuffer += 0x200) {
 		// Fill SD buffer
 			fread(sdBuffer, 1, 512, fd);
 
@@ -457,10 +460,10 @@ bool flashRepro_GBA()
       
 			// Erase needed sectors
 			if ((((flashid >> 8) & 0XFF) == 0x88) || (((flashid >> 8) & 0XFF) == 0x89) || manufactorID == 0x1C) {
-				erase(fileSize/2, true);
+				erase(fileSize >> 1, true);
 			}
 			else if (((flashid >> 8) & 0XFF) == 0x22) {
-				erase(fileSize/2, false);
+				erase(fileSize >> 1, false);
 			}
 			
 			//Write flashrom
@@ -483,5 +486,3 @@ bool flashRepro_GBA()
 	
 	return false;
 }
-
-
