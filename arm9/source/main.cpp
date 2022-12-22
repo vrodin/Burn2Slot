@@ -23,8 +23,8 @@ int main(int argc, char **argv) {
 	keysSetRepeat(25,5);
 	sysSetBusOwners(BUS_OWNER_ARM9,BUS_OWNER_ARM9);
 	while(1) {
-		if(flashRepro_GBA())	
-        		BootGbaARM9(1);	
+		flashRepro_GBA();	
+        		//BootGbaARM9(1);	
 	}
 
 	return 0;
